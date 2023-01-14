@@ -1,0 +1,1175 @@
+---
+title: "bank_marketing"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+    keep_tex: yes
+    latex_engine: xelatex
+---
+
+\pagebreak
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE , fig.width=6, fig.height=4)
+if(!require('pacman')) {
+  install.packages('pacman')
+}
+pacman::p_load(bestglm, glmnet, leaps, car, mapproj, dplyr, GGally,gmodels,corrplot,recipes,ranger,gam,vip,gbm,xgboost,FNN,locfit,e1071,ROCR,caret,pROC,glmnet)
+```
+
+```{r}
+bank<-read.csv("bank-additional-full.csv",sep=";")
+set.seed(123)
+bank<-sample_n(bank,5000)
+```
+
+```{r}
+str(bank)
+summary(bank)
+```
+
+```{r}
+bank[which(bank$job == "unknown"),2]<-NA
+bank[which(bank$marital=="unknown"),3]<-NA
+bank[which(bank$education=="unknown"),4]<-NA
+bank[which(bank$default=="unknown"),5]<-NA
+bank[which(bank$housing=="unknown"),6]<-NA
+bank[which(bank$loan=="unknown"),7]<-NA
+```
+
+```{r}
+sum(is.na(bank))
+sapply(bank, function(x) sum(is.na(x)))
+```
+
+# EDA
+
+## Feature1 Age
+
+```{r fig.width=10, fig.height=6}
+bank%>% 
+  ggplot() +
+  aes(x = age) +
+  geom_bar(aes(fill = y))
+```
+
+From the plots, we observe that most of the bank clients are between age 30-50 and most of the clients aged over 60 and below 25 will subscribe the term deposit.
+
+## Feature2 job
+
+```{r,fig.width=10}
+bank%>% 
+  ggplot() +
+  aes(x = job) +
+  geom_bar(aes(fill = y))+
+  theme(axis.text.x = element_text(angle = -40, vjust = 0.5))
+```
+
+```{r}
+par(las=2)
+plot(factor(bank$job), factor(bank$y), xlab="",ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+Most of the customers are admin, blue-collars and technician. While the retired and student clients are more likely to subscribe the deposit term which also indicate by the age plot.
+
+## Feature3 marital
+
+```{r,fig.heigth=4}
+bank%>% 
+  ggplot() +
+  aes(x = marital) +
+  geom_bar(aes(fill = y))
+```
+
+```{r,fig.height=4}
+plot(factor(bank$marital), factor(bank$y), xlab ="martial", ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+The married clients and divorced clients seem to have the close probability of subscribing and singe clients have the highest probability to subscribe among these three kinds of clients.
+
+## Feature4 education
+
+```{r,fig.height=5}
+bank%>% 
+  ggplot() +
+  aes(x = education) +
+  geom_bar(aes(fill = y))+
+  theme(axis.text.x = element_text(angle = -90, vjust = 0.5))
+```
+
+```{r,fig.width=10}
+plot(factor(bank$education), factor(bank$y), ylab = "subscribe",col = c("#00BFC4","#F8766D"))
+
+```
+
+It seems that with higher education, the probability of subscribing term deposit will increase
+
+## Feature5 default:has credit in default?
+
+```{r,fig.height=5}
+bank%>% 
+  ggplot() +
+  aes(x = default) +
+  geom_bar(aes(fill = y))
+```
+
+All people either do not have credit in default or unknown credit in default. Thus it is reasonable to delete the default column.
+
+## Feature6 housing
+
+```{r,fig.height=4}
+bank%>% 
+  ggplot() +
+  aes(x = housing) +
+  geom_bar(aes(fill = y))
+```
+
+```{r,fig.height=5}
+plot(factor(bank$housing), factor(bank$y), xlab ="housing", ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+About half of the clients have housing loan and half of the clients does not have housing loan. Clients with housing loan and without housing loan seem to have the same probability of subscribing. So this feature may not affect the final result.
+
+## Feature7 loan:has housing loan?
+
+```{r,fig.height=5}
+bank%>% 
+  ggplot() +
+  aes(x = loan) +
+  geom_bar(aes(fill = y))
+```
+
+```{r,fig.height=5}
+plot(factor(bank$loan), factor(bank$y), xlab ="loan", ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+The difference of subscribe probability between clients with no loan and loan are small. So the loan variable may dose not affect the result.
+
+## Feature8 contact: contact communication type
+
+```{r,fig.height=5}
+bank%>% 
+  ggplot() +
+  aes(x = contact) +
+  geom_bar(aes(fill = y))
+```
+
+```{r,fig.height=5}
+plot(factor(bank$contact), factor(bank$y), xlab ="contact", ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+From the plot, we observe that cellular clients are more likely to subscribe the term deposit. Variable contact is significant. SO it is reasonable to guess the potential clients that will subscribe the term deposit should be cellular user.
+
+## Feature9 month: last contact month
+
+```{r,fig.height=4}
+bank%>% 
+  ggplot() +
+  aes(x = month) +
+  geom_bar(aes(fill = y))
+```
+
+```{r,fig.width=8}
+par(las=2)
+plot(factor(bank$month), factor(bank$y), xlab ="month", ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+From the plot, we observed the clients with last contacting in March, September, October and December are more likely to subscribe and the clients that last contacting in these 4 months are less.
+
+## Feature10 day_of_week: last contact day of the week
+
+```{r,fig.height=4}
+bank%>% 
+  ggplot() +
+  aes(x = day_of_week) +
+  geom_bar(aes(fill = y))
+```
+
+```{r,fig.width=8}
+par(las=2)
+plot(factor(bank$day_of_week), factor(bank$y), xlab ="day_of_week", ylab = "subscribe",      col = c("#00BFC4","#F8766D"))
+```
+
+From the plot we observed, the last contact day_of_week does not affect the subscribing results a lot, so we may not consider this effect in our final model.
+
+## Feature11 duration: last contact duration, in seconds
+
+```{r,fig.height=4}
+boxplot(duration~y,data=bank,col=c("#00BFC4","#F8766D"))
+```
+
+This attribute highly affects the output target (e.g., if duration=0 then y='no'). Yet, the duration is not known before a call is performed. Also, after the end of the call y is obviously known. Thus, it should be discarded in our predictive model.
+
+## Feature12 campaign: number of contacts performed during this campaign and for this client
+
+```{r,fig.height=4}
+boxplot(campaign~y,data=bank,col=c("#00BFC4","#F8766D"))
+```
+
+```{r,fig.width=8}
+par(las=2)
+plot(factor(bank$campaign), factor(bank$y), xlab ="campaign", ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+Most of the clients being contacted less than 6 times during this campaign. And with clients being contacted less than 6 times. it seems that there do not exits huge difference in probability of subscribing.
+
+## Feature13 pdays: number of days that passed by after the client was last contacted from a previous campaign.
+
+```{r,fig.width=8}
+plot(factor(bank$pdays), factor(bank$y), xlab ="pdays", ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+```{r}
+table(bank$pdays,bank$y)
+```
+
+999 pdays means client was not previously been contacted from a previous campaign and it takes a large part of clients. From the table, we can find that clients that been contacted from a previous campaign are more likely to subscribe the term deposit.
+
+## Feature14 previous: number of contacts performed before this campaign and for this client
+
+```{r,fig.width=8}
+plot(factor(bank$previous), factor(bank$y), xlab ="previous", ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+```{r}
+table(bank$previous,bank$y)
+```
+
+When feature pdays=999, it means previous=0, when previous\>0, the probability of subscribing is higher than previous=0.
+
+## Feature15 poutcome: outcome of the previous marketing campaign
+
+```{r,fig.height=4}
+bank%>% 
+  ggplot() +
+  aes(x = poutcome) +
+  geom_bar(aes(fill = y))
+```
+
+```{r,fig.width=8}
+plot(factor(bank$poutcome), factor(bank$y), xlab ="poutcome", ylab = "subscribe", 
+     col = c("#00BFC4","#F8766D"))
+```
+
+The clients with previous campaign outcome is success prefer to subscribe the term deposit for this campaign.
+
+## Feature16 emp.var.rate:employment variation rate - quarterly indicator
+
+```{r,fig.height=4,fig.width=6}
+ggplot(bank, aes(x = emp.var.rate, colour = y, fill = y)) +
+  geom_freqpoly() +
+  facet_grid(~y)
+```
+
+\`
+
+## Feature17 cons.price.idx: consumer price index - monthly indicator
+
+```{r,fig.height=4,fig.width=6}
+ggplot(bank, aes(x = cons.price.idx, colour = y, fill = y)) +
+  geom_freqpoly() +
+  facet_grid(~y)
+```
+
+## Feature18 cons.conf.idx: consumer confidence index - monthly indicator
+
+```{r,fig.height=4,fig.width=6}
+ggplot(bank, aes(x = cons.conf.idx, colour = y, fill = y)) +
+  geom_freqpoly() +
+  facet_grid(~y)
+```
+
+## Feature19 euribor3m: euribor 3 month rate - daily indicator
+
+```{r,fig.height=4,fig.width=6}
+ggplot(bank, aes(x = euribor3m, colour = y, fill = y)) +
+  geom_freqpoly() +
+  facet_grid(~y)
+```
+
+## Feature20 nr.employed: number of employees - quarterly indicator
+
+```{r,fig.height=4,fig.width=6}
+ggplot(bank, aes(x = nr.employed, colour = y, fill = y)) +
+  geom_freqpoly() +
+  facet_grid(~y)
+```
+
+```{r,fig.height=4, fig.width=6}
+ggplot(bank[,c(16,17,18,19,20)] %>%  cor() %>% reshape2::melt(),
+        aes(x = Var1 ,y = Var2, fill = value)) +
+  geom_tile(color="white",size=0.1) +
+  xlab("") +
+  ylab("") +
+  guides(fill = guide_legend(data.crdle = "Correlation")) +
+  scale_fill_gradient( low = "#fef4ec", high = "#f79c56") +     
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))+
+  geom_text(aes(Var2, Var1, label = round(value,2)))
+```
+
+Moreover, the euribor3m, emp.var.rate and nr.employed are high correlate with, so we may not include all 3 variables in our final model.
+
+# Data processing
+
+```{r}
+bank$job<-factor(bank$job)
+bank$marital<-factor(bank$marital)
+bank$education<-factor(bank$education,levels=c("illiterate","basic.4y","basic.6y",                      "basic.9","high.school","uniersity.degree",
+                      "professional.course"))
+bank$default<-factor(bank$default)
+bank$housing<-factor(bank$housing)
+bank$loan<-factor(bank$loan)
+bank$contact<-factor(bank$contact)
+bank$month<-factor(bank$month,levels=c("mar","apr","may","jun","jul","aug","sep",
+                                       "oct","nov","dec"))
+bank$day_of_week<-factor(bank$day_of_week,levels = c("mon", "tue","wed", "thu", "fri"))
+bank$poutcome<-factor(bank$poutcome)
+bank$y<-factor(bank$y)
+bank.data<-bank[,-c(11)]
+```
+
+```{r}
+set.seed(123)
+split <- rsample::initial_split(bank.data, prop = 0.7,strata = "y")
+bank.train <- rsample::training(split)
+bank.test <- rsample:: testing(split)
+```
+
+## Feature Engineering
+
+```{r}
+blueprint <-recipe(y ~ ., data = bank.train) %>%
+  step_nzv(all_predictors())%>%
+  step_impute_mode(job,marital,education,housing,loan)%>%
+  step_integer(education,month,day_of_week)%>%
+  step_center(all_numeric(),)  %>%
+  step_scale(all_numeric()) %>%
+  step_dummy(all_nominal(),-y)
+  
+prepare <- prep(blueprint, training = bank.train)
+baked_train_data <- bake(prepare, new_data = bank.train)
+baked_test_data <- bake(prepare, new_data = bank.test)
+```
+
+**correlation heat map**
+
+```{r,fig.height=8, fig.width=13}
+ggplot(baked_train_data %>% select_if(is.numeric) %>% cor() %>% reshape2::melt(),
+        aes(x = Var1 ,y = Var2, fill = value)) +
+  geom_tile(color="white",size=0.1) +
+  xlab("") +
+  ylab("") +
+  guides(fill = guide_legend(data.crdle = "Correlation")) +
+  scale_fill_gradient( low = "#fef4ec", high = "#f79c56") +     
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))+
+  geom_text(aes(Var2, Var1, label = round(value,2)))
+```
+
+# Modelling
+
+## Logistic regression
+
+### simple logistic regression
+
+```{r}
+bankglm<-glm(y~.,data = baked_train_data,family = binomial(logit))
+summary(bankglm)
+```
+
+From the summary table, we notice that only a few variables are significant, we will use lasso regression to select the best model.
+
+#### LASSO
+
+```{r}
+X.train<-as.matrix(baked_train_data[,-12])
+Y.train<-baked_train_data$y
+```
+
+```{r}
+set.seed(10) # Set seed to guarantee the result is reproducible
+fit.lasso.cv <- cv.glmnet(X.train, Y.train, alpha=1, nfolds=10,
+                        family = 'binomial')
+```
+
+```{r, warning = F}
+df.lasso.cv <- data.frame(lambda = fit.lasso.cv$lambda, 
+                          cvm = fit.lasso.cv$cvm, nonzero = fit.lasso.cv$nzero)
+df.lasso.cv$uci <- df.lasso.cv$cvm + fit.lasso.cv$cvsd
+df.lasso.cv$lci <- df.lasso.cv$cvm - fit.lasso.cv$cvsd
+ggplot(df.lasso.cv, aes(x = lambda, y = cvm, color = nonzero)) + 
+  geom_point() +
+  scale_x_log10() +
+  scale_color_gradientn(colours = rainbow(5)) +
+  geom_errorbar(aes(ymin = lci, ymax= uci)) +
+  geom_vline(xintercept = fit.lasso.cv$lambda.min, linetype="dashed", col = "red") +
+  geom_vline(xintercept = fit.lasso.cv$lambda.1se, linetype="dashed", col = "blue") +
+  ggtitle("Cross-Validation: Lambda and Cross-Validation Mean Error") +
+  theme_classic()
+```
+
+```{r}
+coef.min <- coef(fit.lasso.cv, s="lambda.min")
+coef.min <- coef.min[which(coef.min !=0),]   # get the non-zero coefficients
+var.min <- rownames(as.matrix(coef.min)) # output the names
+glm.input <- as.formula(paste("y", "~", paste(var.min[-1], collapse = "+"))) # prepare for glm formula
+glm.input
+```
+
+```{r}
+fit.min.glm <- glm(glm.input, family = binomial(logit), data=baked_train_data)
+summary(fit.min.glm) 
+```
+
+Next, we use subset selection to select the model
+
+#### Model Selection
+
+```{r}
+fit.exh <- regsubsets(glm.input, nvmax= length(var.min)-1, 
+                      method="exhau",baked_train_data)
+f.e <- summary(fit.exh)
+```
+
+```{r}
+var.exh <- names(coef(fit.exh, which.min(f.e$bic)))
+glm.final <- as.formula(paste("y", "~", paste(var.exh[-1], collapse = "+")))
+glm.final
+```
+
+#### Final Model
+
+```{r}
+bankglm.final<-glm(glm.final,family = binomial(logit),data=baked_train_data )
+summary(bankglm.final)
+```
+
+Fit an anova test to check whether it is appropriate to use shorter model.
+
+```{r}
+anova(bankglm.final,bankglm,test="Chisq")
+```
+
+The p value is larger than 0.05 which means the shorter model is appropriate.
+
+```{r}
+#prediction for simple logistic model
+bankglm.train<-predict(bankglm.final,baked_train_data,type="response")
+bankglm.train.label <- ifelse(bankglm.train > 0.5, "yes", "no")
+confusionMatrix(table(predict=bankglm.train.label,true=baked_train_data$y))
+```
+
+```{r}
+bankglm.test<-predict(bankglm.final,baked_test_data,type="response")
+bankglm.test.label <- ifelse(bankglm.test > 0.5, "yes", "no")
+confusionMatrix(table(predicted=bankglm.test.label,true=baked_test_data$y))
+```
+
+```{r}
+vip::vip(bankglm.final,num_features=30,scale=TRUE)
+```
+
+**The most four important features are emp.var.rate, cons.price.idx, poutcome_success, contact_telephone**
+
+```{r,warning=FALSE,fig.height=4}
+library(pdp)
+par( mfrow= c(2,3) )
+plot(partial(bankglm.final,pred.var="emp.var.rate",
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(bankglm.final,pred.var="cons.price.idx",
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(bankglm.final,pred.var="cons.conf.idx",type="classification",
+        prob=TRUE,which.class=2),type="l")
+plot(partial(bankglm.final,pred.var="contact_telephone",
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(bankglm.final,pred.var="poutcome_nonexistent",
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(bankglm.final,pred.var="poutcome_success",
+             type="classification",prob=TRUE,which.class=2),type="l")
+```
+
+From the pdp plots, we find that emp.var.rate,cons.price.idx,cons.conf.idx are non-linear and contact_telephone, poutcome_nonexistent and poutcome_success are linear.
+
+### Generalized Additive Model
+
+```{r,warning=FALSE}
+smooth.spline(baked_train_data$emp.var.rate,baked_train_data$y,cv=TRUE)$df
+smooth.spline(baked_train_data$cons.price.idx,baked_train_data$y,cv=TRUE)$df
+smooth.spline(baked_train_data$ cons.conf.idx,baked_train_data$y,cv=TRUE)$df
+```
+
+```{r}
+bank_gam<-gam(y~s(emp.var.rate,2.382228)+s(cons.price.idx,2.52704)+
+                s(cons.conf.idx,13.47412)+contact_telephone+
+                poutcome_nonexistent+poutcome_success,
+                family = binomial,data=baked_train_data )
+```
+
+```{r}
+#prediction for simple logistic model
+bankgam.train<-predict(bank_gam,baked_train_data,type="response")
+bankgam.train.label <- ifelse(bankgam.train > 0.5, "yes", "no")
+confusionMatrix(table(predict=bankgam.train.label,true=baked_train_data$y))
+```
+
+```{r}
+bankgam.test<-predict(bank_gam,baked_test_data,type="response")
+bankgam.test.label <- ifelse(bankgam.test > 0.5, "yes", "no")
+confusionMatrix(table(predicted=bankgam.test.label,true=baked_test_data$y))
+```
+
+## KNN
+
+```{r}
+set.seed(123)
+cv<-trainControl(
+  method="repeatedcv",
+  number=10,
+  repeats=5
+)
+hyper_grid<-expand.grid(k=seq(2,20,by=1))
+knn_fit<-train(
+  blueprint,
+  data=bank.train,
+  method="knn",
+  trControl = cv,
+  tuneGrid=hyper_grid
+)
+```
+
+```{r}
+plot(knn_fit)
+```
+
+```{r}
+knn_fit$bestTune
+knn_fit$results
+```
+
+the optimal solution is when k=17.
+
+```{r}
+predictknn_train <- knn(train = baked_train_data[,-12], test = baked_train_data[,-12], 
+                       cl = baked_train_data$y, k=17,prob=TRUE)
+# predict the accuracy
+misClassError1 <- mean(predictknn_train!=baked_train_data$y )
+print(paste('Accuracy of the training set =', 1-misClassError1))
+```
+
+```{r}
+confusionMatrix(table(predictknn_train,y=baked_train_data$y))
+```
+
+```{r}
+predictknn_test <- knn(train = baked_train_data[,-12], test = baked_test_data[,-12], 
+                       cl = baked_train_data$y, k =17,prob = TRUE)
+# predict the accuracy
+misClassError2 <- mean(predictknn_test!=baked_test_data$y )
+print(paste('Accuracy of the testing set =', 1-misClassError2))
+```
+
+```{r}
+confusionMatrix(table(predictknn_test,baked_test_data$y))
+```
+
+## SVM
+
+### Linear SVM
+
+```{r}
+set.seed(123)
+tune.out_l<- tune(svm,y ~ ., data = baked_train_data, kernel = "linear",
+                  ranges=list(cost =c(0.01,0.1,1,10)))
+summary(tune.out_l)
+```
+
+```{r}
+pred.train_l <- predict(tune.out_l$best.model,baked_train_data)
+confusionMatrix(table(predict = pred.train_l, truth = baked_train_data$y))
+```
+
+```{r}
+pred.test_l <- predict(tune.out_l$best.model,baked_test_data)
+confusionMatrix(table(predict = pred.test_l, truth = baked_test_data$y))
+```
+
+### Non Linear SVM with radial kernel
+
+```{r}
+set.seed(123)
+tune.out_r<- tune(svm,y ~ ., data = baked_train_data, kernel = "radial",
+                  ranges=list(cost =c(0.1,1,10),gamma=c(0.5,1,2)))
+summary(tune.out_r)
+```
+
+```{r}
+pred.train_r <- predict(tune.out_r$best.model,baked_train_data)
+confusionMatrix(table(predict = pred.train_r, truth = baked_train_data$y))
+```
+
+```{r}
+pred.test_r <- predict(tune.out_r$best.model,baked_test_data)
+confusionMatrix(table(predict = pred.test_r, truth = baked_test_data$y))
+```
+
+### Non Linear SVM with polynomial kernel
+
+```{r}
+set.seed(10)
+tune.out_p<- tune(svm,y ~ ., data = baked_train_data, kernel = "polynomial",
+                  ranges=list(cost =c(0.1,1,10),degree=c(1,2,3,4)))
+summary(tune.out_p)
+```
+
+```{r}
+pred.train_p <- predict(tune.out_p$best.model,baked_train_data)
+confusionMatrix(table(predict = pred.train_p, truth = baked_train_data$y))
+```
+
+```{r}
+pred.test_p <- predict(tune.out_p$best.model,baked_test_data)
+confusionMatrix(table(predict = pred.test_p, truth = baked_test_data$y))
+```
+
+```{r}
+rocplot=function(pred,truth,...){
+  predob=prediction(pred,truth)
+  perf=performance(predob,"tpr","fpr")
+  plot(perf,...)
+}
+```
+
+```{r}
+#roc for linear svm model
+svmfit_l<-svm(y~.,data=baked_train_data,kernel="linear",cost=0.01)
+fitted_l=as.numeric(attributes(predict(svmfit_l,baked_test_data,
+                          decision.values=TRUE))$decision.values)
+rocplot(-fitted_l,baked_test_data$y,col="red")
+#roc for radial svm model
+svmfit_r<-svm(y~.,data=baked_train_data,kernel="radial",gamma=0.5,cost=1)
+fitted_r=as.numeric(attributes(predict(svmfit_r,baked_test_data,
+                          decision.values=TRUE))$decision.values)
+rocplot(-fitted_r,baked_test_data$y,add=TRUE,col="green")
+#roc for poly svm model
+svmfit_p<-svm(y~.,data=baked_train_data,kernel="polynomial",degree=2,cost=0.1)
+fitted_p=as.numeric(attributes(predict(svmfit_p,baked_test_data,
+                          decision.values=TRUE))$decision.values)
+rocplot(-fitted_p,baked_test_data$y,add=TRUE,col="blue")
+legend("bottomright",legend=c("svm_linear","svm_radial","svm_poly"),
+       col=c("red","green","blue"),
+       lty=1,lwd=2)
+```
+
+```{r}
+auc(baked_test_data$y,-fitted_l)
+auc(baked_test_data$y,-fitted_r)
+auc(baked_test_data$y,-fitted_p)
+```
+
+1The svm with polynomial kernel(degree=2, cost=0.1) has the largest auc. Thus we may choose the svm with polynomial kernel(degree=2, cost=0.1)
+
+## Random Forest
+
+```{r}
+n_features<-length(setdiff(names(baked_train_data),"y"))
+# train a default random forest model
+bank_rf1<-ranger(
+    formula=y~.,
+    data=baked_train_data,
+    mtry = floor(sqrt(n_features)),
+    respect.unordered.factors = "order",
+    seed=123
+)
+default_rmse<-sqrt(bank_rf1$prediction.error)
+default_rmse
+```
+
+```{r}
+#create hyperparameter grid
+hyper_grid<-expand.grid(
+                        mtry=floor(n_features*c(.05,.15, 0.333, 0.4)),
+                        min.node.size=c(1,3,5,10),
+                        replace=c(TRUE,FALSE),
+                        sample.fraction=c(.5,.63,.8),
+                        rmse=NA
+)
+# excute full catesian grid search
+for (i in seq_len(nrow(hyper_grid))) {
+  #fit model for ith hyperparameter combination
+  fit1<-ranger(
+    formula=y~.,
+    data=baked_train_data,
+    num.trees = n_features*10,
+    mtry=hyper_grid$mtry[i],
+    min.node.size=hyper_grid$min.node.size[i],
+    replace=hyper_grid$replace[i],
+    sample.fraction=hyper_grid$sample.fraction[i],
+    verbose=FALSE,
+    seed=123,
+    respect.unordered.factors = "order",
+  )
+  # export OOB error
+  hyper_grid$rmse[i]<-sqrt(fit1$prediction.error)
+}
+```
+
+```{r}
+#assess top 10 models
+hyper_grid %>%
+  arrange(rmse) %>%
+  mutate(perc_gain=(default_rmse-rmse)/default_rmse*100) %>%
+  head(10)
+```
+
+```{r}
+rf_impurity<-ranger(
+    formula=y~.,
+    data=baked_train_data,
+    num.trees = n_features*10,
+    mtry =4,
+    min.node.size=10,
+    replace=FALSE,
+    sample.fraction=0.5,
+    importance = "impurity",
+    respect.unordered.factors = "order",
+    verbose=FALSE,
+    seed=123
+)
+```
+
+```{r}
+# find 4 most important features
+vip::vip(rf_impurity,num_features=30,scale=TRUE)
+```
+
+pdp for important features.
+
+```{r,warning=FALSE,fig.height=4}
+rf<-ranger(
+    formula=y~.,
+    data=baked_train_data,
+    num.trees = n_features*10,
+    mtry =4,
+    min.node.size=10,
+    replace=FALSE,
+    sample.fraction=0.5,
+    importance = "impurity",
+    respect.unordered.factors = "order",
+    verbose=FALSE,
+    seed=123,
+    probability = TRUE
+)
+par( mfrow= c(2,3) )
+plot(partial(rf, pred.var = "euribor3m", 
+              prob = TRUE) ,type="l")
+plot(partial(rf,pred.var="age",
+             prob=TRUE),type="l")
+plot(partial(rf,pred.var="nr.employed",
+             prob=TRUE),type="l")
+plot(partial(rf,pred.var="cons.conf.idx",
+             prob=TRUE),type="l")
+plot(partial(rf,pred.var="poutcome_success",
+             prob=TRUE),type="l")
+```
+
+```{r}
+pred.bank.rf <- predict(rf_impurity, data = baked_train_data)
+confusionMatrix(table(predict= pred.bank.rf$predictions,true=baked_train_data$y))
+```
+
+```{r}
+pred.bank.rf.2<- predict(rf_impurity, data = baked_test_data)
+confusionMatrix(table(predict= pred.bank.rf.2$predictions,
+                      true=baked_test_data$y))
+```
+
+## Basic GBM
+
+```{r}
+# convert y to 0 and 1 since Bernoulli requires the response to be in {0,1}
+gbm_train<-baked_train_data
+gbm_test<-baked_test_data
+gbm_train$y<-ifelse(gbm_train$y=="no",0,1)
+gbm_test$y<-ifelse(gbm_test$y=="no",0,1)
+```
+
+```{r,results='hide'}
+# step 1
+# run a basis gbm model
+set.seed(123)
+system.time(bank_gbm1<-gbm(
+  formula=y~.,
+  data=gbm_train,
+  distribution = "bernoulli",
+  n.trees=5000,
+  shrinkage = 0.1,
+  interaction.depth = 3,
+  n.minobsinnode = 10,
+  cv.folds = 10
+))
+```
+
+```{r}
+#step 2
+#create grid search
+hyper_grid<-expand.grid(
+  learning_rate=c(0.3,0.1,0.05,0.01),
+  RMSE=NA,
+  trees=NA,
+  time=NA
+)
+```
+
+```{r}
+#excute grid search
+for (i in seq_len(nrow(hyper_grid))) {
+  #fit gbm
+  set.seed(123)
+  train_time<-system.time({
+    m<-gbm(
+        formula=y~.,
+        data=gbm_train,
+        distribution = "bernoulli",
+        n.trees=2000,
+        shrinkage = hyper_grid$learning_rate[i],
+        interaction.depth = 3,
+        n.minobsinnode = 10,
+        cv.folds = 10
+    )
+  }
+    
+  )
+  hyper_grid$RMSE[i]<-sqrt(min(m$cv.error))
+  hyper_grid$trees[i]<-which.min(m$cv.error)
+  hyper_grid$time[i]<-train_time[["elapsed"]]
+}
+```
+
+```{r}
+#results
+arrange(hyper_grid,RMSE)
+```
+
+```{r}
+#step 3
+# search grid
+hyper_grid2<-expand.grid(
+  n.trees=1000,
+  shrinkage=0.01,
+  interaction.depth=c(3,5,7),
+  n.minobsinnode=c(5,10,15)
+)
+```
+
+```{r}
+# create model fit function
+model_fit<-function(n.trees,shrinkage,interaction.depth,n.minobsinnode){
+  set.seed(123)
+  m1<-gbm(
+        formula=y~.,
+        data=gbm_train,
+        distribution = "bernoulli",
+        n.trees=n.trees,
+        shrinkage = shrinkage,
+        interaction.depth = interaction.depth,
+        n.minobsinnode = n.minobsinnode,
+        cv.folds = 10
+  )
+  # compute RMSE
+  sqrt(min(m1$cv.error))
+}
+```
+
+```{r}
+#perform search grid with functional programming
+hyper_grid2$rmse<-purrr::pmap_dbl(
+  hyper_grid2,
+  ~model_fit(
+    n.trees = ..1,
+    shrinkage = ..2,
+    interaction.depth = ..3,
+    n.minobsinnode = ..4
+  )
+)
+```
+
+```{r}
+#results
+arrange(hyper_grid2,rmse)
+```
+
+```{r}
+# run the best gbm model
+set.seed(123)
+bank_gbm_best<-gbm(
+  formula=y~.,
+  data=gbm_train,
+  distribution = "bernoulli",
+  n.trees=1000,
+  shrinkage = 0.01,
+  interaction.depth = 5,
+  n.minobsinnode = 5,
+  cv.folds = 10
+)
+
+```
+
+```{r}
+gbm.perf(bank_gbm_best,method="cv")
+```
+
+```{r}
+# find 4 most important features
+vip::vip(bank_gbm_best,num_features=30,scale=TRUE)
+```
+
+```{r}
+par(mfrow= c(2,3) )
+plot(partial(bank_gbm_best, pred.var = "euribor3m", n.trees=1000,
+             type = "classification", prob = TRUE, which.class = 2) ,type="l")
+plot(partial(bank_gbm_best,pred.var="age",n.trees=1000,
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(bank_gbm_best,pred.var="nr.employed",n.trees=1000,
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(bank_gbm_best,pred.var="month",n.trees=1000,
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(bank_gbm_best,pred.var="poutcome_success",n.trees=1000,
+             type="classification",prob=TRUE,which.class=2),type="l")
+```
+
+```{r}
+bankgbm.train<-predict(bank_gbm_best,baked_train_data,type="response")
+bankgbm.train.label <- ifelse(bankgbm.train > 0.5, "yes", "no")
+confusionMatrix(table(predicted=bankgbm.train.label,true=baked_train_data$y))
+```
+
+```{r}
+bankgbm.test<-predict(bank_gbm_best,baked_test_data,type="response")
+bankgbm.test.label <- ifelse(bankgbm.test > 0.5, "yes", "no")
+confusionMatrix(table(predicted=bankgbm.test.label,true=baked_test_data$y))
+```
+
+## XGBoost
+
+```{r}
+X<-as.matrix(baked_train_data[,-12])
+Y<-if_else(baked_train_data[,12]=="no",0,1)
+X_test<-as.matrix(baked_test_data[,-12])
+```
+
+```{r}
+set.seed(123)
+bank_xgb<-xgb.cv(
+  data=X,
+  label=Y,
+  nrounds=3000,
+  objective="binary:logistic",
+  early_stopping_rounds = 50,
+  nfold=10,
+  params = list(
+    eta=0.01,
+    max_depth=5,
+    min_child_weight=5,
+    subsample=0.5,
+    colsample_bytree=0.5
+  ),
+  verbose = 0
+)
+```
+
+```{r}
+bank_xgb$best_iteration
+```
+
+```{r}
+# hyoerparameter grid
+hyper_grid<-expand.grid(
+    eta=0.01,
+    max_depth=5,
+    min_child_weight=5,
+    subsample=0.5,
+    colsample_bytree=0.5,
+    gamma=c(0,1,10),
+    lambda=c(0,0.1,1,10),
+    alpha=c(0,0.1,1,10),
+    rmse=0,
+    trees=0
+)
+```
+
+```{r}
+#grid search
+for (i in seq_len(nrow(hyper_grid))) {
+  set.seed(123)
+  m2<-xgb.cv(
+      data=X,
+      label=Y,
+      nrounds=1000,
+      objective="binary:logistic",
+      early_stopping_rounds = 50,
+      nfold=10,
+      params = list(
+        eta=hyper_grid$eta[i],
+        max_depth=hyper_grid$max_depth[i],
+        min_child_weight=hyper_grid$min_child_weight[i],
+        subsample=hyper_grid$subsample[i],
+        colsample_bytree=hyper_grid$colsample_bytree[i],
+        gamma=hyper_grid$gamma[i],
+        lambda=hyper_grid$lambda[i],
+        alpha=hyper_grid$alpha[i]
+      ),
+      verbose = 0
+  )
+  hyper_grid$rmse[i]<-min(m2$evaluation_log$test_logloss_mean)
+  hyper_grid$trees[i]<-m2$best_iteration
+}
+```
+
+```{r}
+hyper_grid %>%
+  arrange(rmse) %>%
+  head(10)
+```
+
+```{r}
+params<-list(
+  eta=0.01,
+  max_depth=5,
+  min_child_weight=5,
+  subsample=0.5,
+  colsample_bytree=0.5,
+  gamma=1,
+  lambda=10,
+  alpha=1
+)
+```
+
+```{r}
+set.seed(123)
+xgb.fit.final<-xgboost(
+  params = params,
+  data=X,
+  label=Y,
+  nrounds=613,
+  objective="binary:logistic",
+  verbose = 0
+)
+```
+
+```{r}
+# find 4 most important features
+vip::vip(xgb.fit.final,num_features=30,scale=TRUE)
+```
+
+```{r}
+par(mfrow= c(2,3) )
+plot(partial(xgb.fit.final, pred.var = "euribor3m",train=X,
+             type = "classification", prob = TRUE, which.class = 2) ,type="l")
+plot(partial(xgb.fit.final,pred.var="nr.employed",train=X,
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(xgb.fit.final,pred.var="poutcome_success",train=X,
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(xgb.fit.final,pred.var="cons.conf.idx",train=X,
+             type="classification",prob=TRUE,which.class=2),type="l")
+plot(partial(xgb.fit.final,pred.var="age",train=X,
+             type="classification",prob=TRUE,which.class=2),type="l")
+```
+
+```{r}
+xgb_train <- predict(xgb.fit.final,X,type="response") 
+xgb_train_class <- if_else(xgb_train > 0.50,"yes","no")
+confusionMatrix(table(predict=xgb_train_class,true=baked_train_data$y))
+```
+
+```{r}
+xgb_test <- predict(xgb.fit.final,X_test,type="response") 
+xgb_test_class <- if_else(xgb_test > 0.50,"yes","no")
+confusionMatrix(table(predict=xgb_test_class,true=baked_test_data$y))
+```
+
+# ROC Comparison
+
+```{r}
+rocplot=function(pred,truth,...){
+  predob=prediction(pred,truth)
+  perf=performance(predob,"tpr","fpr")
+  plot(perf,...)
+}
+```
+
+```{r,fig.height=6,fig.width=8}
+# roc for logistic model
+fitted_glm<-predict(bankglm.final,baked_train_data , type = "response")
+rocplot(fitted_glm,baked_train_data$y,col="blue",main="roc on training set")
+#roc for generalized  additive model
+fitted_gam<-predict(bank_gam,baked_train_data , type = "response")
+rocplot(fitted_gam,baked_train_data$y,add=TRUE,col="red")
+#roc for knn
+fitted_knn <- attr(predictknn_train, "prob")
+rocplot(-fitted_knn ,baked_train_data$y,add=TRUE,col="green")
+#roc for svm model
+svmfit_p<-svm(y~.,data=baked_train_data,kernel="polynomial",degree=2 ,cost=0.1)
+fitted_p=as.numeric(attributes(predict(svmfit_p,baked_train_data,
+                          decision.values=TRUE))$decision.values)
+rocplot(-fitted_p,baked_train_data$y,add=TRUE,col="yellow")
+#roc for random forest
+fitted_rf<-predict(rf, data = baked_train_data)$predictions[,2]
+rocplot(fitted_rf,baked_train_data$y,add=TRUE,col="purple")
+# roc for Basic GBM model
+fitted_gbm<-predict(bank_gbm_best,baked_train_data,type="response")
+rocplot(fitted_gbm,baked_train_data$y,add=TRUE,col="orange")
+# roc for xgboost model
+fitted_xgb<-predict(xgb.fit.final,X,type="response")
+rocplot(fitted_xgb,baked_train_data$y,add=TRUE,col="brown")
+legend("bottomright",legend=c("Logistic","GAM","KNN","SVM","RF","GBM","XGB"),
+       col=c("blue","red","green","yellow","purple","orange","brown"),
+       lty=1,lwd=2)
+```
+
+```{r,fig.height=6,fig.width=8}
+# roc for logistic model
+fitted_glm<-predict(bankglm.final,baked_test_data , type = "response")
+rocplot(fitted_glm,baked_test_data$y,col="blue",main="roc on testing set")
+#roc for generalized  additive model
+fitted_gam<-predict(bank_gam,baked_test_data , type = "response")
+rocplot(fitted_gam,baked_test_data$y,add=TRUE,col="red")
+#roc for knn
+fitted_knn <- attr(predictknn_test, "prob")
+rocplot(-fitted_knn ,baked_test_data$y,add=TRUE,col="green")
+#roc for svm model
+svmfit_p<-svm(y~.,data=baked_train_data,kernel="polynomial",cost=0.1,degree=2)
+fitted_p=as.numeric(attributes(predict(svmfit_p,baked_test_data,
+                          decision.values=TRUE))$decision.values)
+rocplot(-fitted_p,baked_test_data$y,add=TRUE,col="yellow")
+#roc for random forest
+fitted_rf<-predict(rf, data = baked_test_data)$predictions[,2]
+rocplot(fitted_rf,baked_test_data$y,add=TRUE,col="purple")
+# roc for Basic GBM model
+fitted_gbm<-predict(bank_gbm_best,baked_test_data,type="response")
+rocplot(fitted_gbm,baked_test_data$y,add=TRUE,col="orange")
+# roc for xgboost model
+fitted_xgb<-predict(xgb.fit.final,X_test,type="response")
+rocplot(fitted_xgb,baked_test_data$y,add=TRUE,col="brown")
+legend("bottomright",legend=c("Logistic","GAM","KNN","SVM","RF","GBM","XGB"),
+       col=c("blue","red","green","yellow","purple","orange","brown"),
+       lty=1,lwd=2)
+```
+
+```{r}
+auc(baked_test_data$y,-fitted_glm)
+auc(baked_test_data$y,-fitted_gam)
+auc(baked_test_data$y,-fitted_knn)
+auc(baked_test_data$y,-fitted_p)
+auc(baked_test_data$y,-fitted_rf)
+auc(baked_test_data$y,-fitted_gbm)
+auc(baked_test_data$y,-fitted_xgb)
+```
